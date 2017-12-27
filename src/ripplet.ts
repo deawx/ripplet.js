@@ -1,3 +1,10 @@
+// for minification efficiency
+const doc                             = document
+const { documentElement, body }       = doc
+const createDiv: () => HTMLDivElement = doc.createElement.bind(doc, 'div')
+const win = window as any
+const DOMMatrix: typeof WebKitCSSMatrix = win.DOMMatrix || win.WebKitCSSMatrix || win.MSCSSMatrix // tslint:disable-line:variable-name
+
 export type RippletOptions = Readonly<typeof defaultOptions>
 
 export const defaultOptions = {
@@ -43,21 +50,30 @@ export default function ripplet(
 }
 
 function generateRipplet(
-  targetElement:  Element,
+  targetElement:  Readonly<Element>,
   originX:        number,
   originY:        number,
   targetRect:     Readonly<ClientRect>,
   options:        RippletOptions,
 ) {
-  const doc                             = document  // for minification efficiency
-  const { documentElement, body }       = doc
-  const createDiv: () => HTMLDivElement = doc.createElement.bind(doc, 'div')
-  const containerElement                = createDiv()
-  let removingElement                   = containerElement
+  const containerElement  = createDiv()
+  let removingElement     = containerElement
   {
-    const appendToParent                = options.appendTo === 'parent'
-    const targetStyle                   = getComputedStyle(targetElement)
-    const containerStyle                = containerElement.style
+    const appendToParent  = options.appendTo === 'parent'
+    const targetStyle     = getComputedStyle(targetElement)
+    const containerStyle  = containerElement.style
+
+    const transform       = targetStyle.transform
+    if (transform && transform !== 'none') {
+      targetRect            = getUntransformedClientRect(targetElement, targetRect)
+      const transformOrigin = targetStyle.transformOrigin!.split(' ').map(parseFloat)
+      const offsetOriginX   = targetRect.left + transformOrigin[0]
+      const offsetOriginY   = targetRect.top  + transformOrigin[1]
+      const point           = new DOMMatrix(transform).inverse().translate(originX - offsetOriginX, originY - offsetOriginY)
+      originX               = point.m41 + offsetOriginX
+      originY               = point.m42 + offsetOriginY
+    }
+
     if (targetStyle.position === 'fixed' || (targetStyle.position === 'absolute' && appendToParent)) {
       if (appendToParent) {
         targetElement.parentElement!.insertBefore(containerElement, targetElement)
@@ -98,7 +114,7 @@ function generateRipplet(
     copyStyles(
       containerStyle,
       targetStyle,
-      ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius']
+      ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius', 'transform', 'transformOrigin']
     )
   }
 
@@ -147,4 +163,20 @@ function mergeDefaultOptions(options?: Partial<RippletOptions>): RippletOptions 
     (merged, field) => (merged[field] = options.hasOwnProperty(field) ? options[field]! : defaultOptions[field], merged),
     {} as typeof defaultOptions
   )
+}
+
+function getUntransformedClientRect(targetElement: Element, targetRect: ClientRect) {
+  const clone                 = body.appendChild(targetElement.cloneNode()) as HTMLElement | SVGElement
+  const cloneStyle            = clone.style
+  cloneStyle.visibility       = 'hidden'
+  cloneStyle.position         = 'absolute'
+  const cloneRectTransformed  = clone.getBoundingClientRect()
+  cloneStyle.transform        = 'none'
+  const cloneRect             = clone.getBoundingClientRect()
+  body.removeChild(clone)
+  const width                 = cloneRect.width
+  const height                = cloneRect.height
+  const left                  = targetRect.left + cloneRect.left - cloneRectTransformed.left
+  const top                   = targetRect.top  + cloneRect.top  - cloneRectTransformed.top
+  return { width, height, left, top, right: left + width, bottom: top + height }
 }
